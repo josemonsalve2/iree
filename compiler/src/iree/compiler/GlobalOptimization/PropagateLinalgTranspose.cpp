@@ -909,30 +909,33 @@ void PropagateLinalgTransposePass::runOnOperation() {
   // or linalg named ops. Also propagate reshapes downwards to open up more
   // transpose fusion opportunities.
   if (!testBubblingOnly) {
-    linalg::ControlFusionFn reshapePropagationFn = [](OpOperand *fusedOperand) {
-      Operation *producer = fusedOperand->get().getDefiningOp();
-      Operation *consumer = fusedOperand->getOwner();
-      if (!IREE::Flow::isNonNullAndOutsideDispatch({producer, consumer})) {
-        return false;
-      }
-      auto consumerLinalgOp = dyn_cast<linalg::LinalgOp>(consumer);
-      if (!consumerLinalgOp) {
-        return false;
-      }
-      // Only reshape generic ops and contraction ops.
-      if (!linalg::isaContractionOpInterface(consumerLinalgOp) &&
-          !isa<linalg::GenericOp>(consumerLinalgOp)) {
-        return false;
-      }
-      // Only propagate reshapes down through generics in this case, hoping
-      // to increase the chance we can fuse with a nearby transpose.
-      if (!isa<tensor::ExpandShapeOp>(producer) &&
-          !isa<tensor::CollapseShapeOp>(producer)) {
-        return false;
-      }
-      return isa_and_nonnull<linalg::TransposeOp>(
-          producer->getOperand(0).getDefiningOp());
-    };
+    linalg::ControlFusionFn reshapePropagationFn =
+        [&](OpOperand *fusedOperand) {
+          Operation *producer = fusedOperand->get().getDefiningOp();
+          Operation *consumer = fusedOperand->getOwner();
+          if (!IREE::Flow::isNonNullAndOutsideDispatch({producer, consumer})) {
+            return false;
+          }
+          auto consumerLinalgOp = dyn_cast<linalg::LinalgOp>(consumer);
+          if (!consumerLinalgOp) {
+            return false;
+          }
+          // Only reshape generic ops and contraction ops.
+          if (!enableAggressivePropagation) {
+            if (!linalg::isaContractionOpInterface(consumerLinalgOp) &&
+                !isa<linalg::GenericOp>(consumerLinalgOp)) {
+              return false;
+            }
+          }
+          // Only propagate reshapes down through generics in this case, hoping
+          // to increase the chance we can fuse with a nearby transpose.
+          if (!isa<tensor::ExpandShapeOp>(producer) &&
+              !isa<tensor::CollapseShapeOp>(producer)) {
+            return false;
+          }
+          return isa_and_present<linalg::TransposeOp>(
+              producer->getOperand(0).getDefiningOp());
+        };
     RewritePatternSet sinkingPatterns(context);
     linalg::populateFoldReshapeOpsByExpansionPatterns(sinkingPatterns,
                                                       reshapePropagationFn);
